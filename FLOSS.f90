@@ -255,7 +255,6 @@ subroutine cabinstructure(totalsize, abinsize, arrayb, totaldist)
 		
 		!loop through the array structure arraydist (arrayb), cl=alculate the cabin from the casep and cbbin from cbsep
 		do i=1, size(arrayb,1)
-			!read(unit=29, fmt='( I4, I4, A4, A1, I4, I4, 4F8.3 )', iostat=fstat2) cabin, cbbin, binelement
 			cabin = int(arrayb(i)%caseparation * 10)
 			cbbin = int(arrayb(i)%cbseparation * 10)
 			if(cabin == 0) cycle
