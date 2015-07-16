@@ -25,11 +25,16 @@ program main
 	end type residuetype
 
 	type distancetype
-		character(len=4) :: pdbid
-		character(len=1) :: chainid
-		integer :: rightresiduenumber, leftresiduenumber
+		integer ::  cabin, cbbin
+		character(len=4) :: rightanchor
+		integer :: rightresiduenumber 
+		character(len=4) ::  leftanchor
+		integer :: leftresiduenumber
 		real :: caseparation, cbseparation, cacross, cbcross
+		character(len=4) :: pdbid 
+		character(len=1) :: chainid
 	end type distancetype
+		
 !the type declarations will remain global because i want them to
 !return and make these allocatable, but for now, initialize them to a very large number
 !return and initialize these elements to 0
@@ -49,12 +54,12 @@ program main
 		character(len=1) :: chainid
 		character(len=200) :: pdbfilename, allpdbs
 		integer :: ostat,cstat,fstat
-		integer :: argnum, indexnum, totaldist
+		integer :: argnum, indexnum
 
 		!for subroutine computeseparation
 
 		!first element in abinsize is cabinsize, second is cbbinsize
-		integer, dimension(500000) :: abinsize
+		integer, dimension(500) :: abinsize
 		integer, dimension(10) :: restotal
 		integer :: res, filecount, totalsize
 		!an allocatable array to store the information
@@ -63,7 +68,6 @@ program main
 		totalsize = 0
 		res = 1
 		filecount = 0
-		totaldist = 0
 
 		!process the commandline arguments
 		argnum = iargc()
@@ -86,10 +90,13 @@ program main
 			call readinpoints(pdbfilename, chainid, arrayres, restotal, res, filecount)
 		enddo
 		close(unit=15, iostat=cstat)
-		call computeseparations(arrayres, arraydist, filecount, restotal, totalsize, abinsize, totaldist)
-		call cabinstructure(totalsize, abinsize, arraydist, totaldist)
+		call computeseparations(arrayres, arraydist, filecount, restotal, totalsize, abinsize)
+		call cabinstructure(totalsize, abinsize, arraydist)
 
 	end subroutine build
+
+
+
 
 	subroutine readinpoints(pdbfilename, chain2, arraya, restotal, res, filecount)
 	!readinpoints takes in the pdb files,reads them for the xyz location of the ca(1,2)/cb(1,2) and passes them to computeseparations to determine the values for each index
@@ -145,13 +152,13 @@ program main
 		close(unit=11, iostat=cstat)	
 	end subroutine readinpoints	
 
-	subroutine computeseparations(arraya, arrayb, filecount, restotal, totalsize, abinsize, totaldist)
+	subroutine computeseparations(arraya, arrayb, filecount, restotal, totalsize, abinsize)
 		!access the xyz coordinates for the ca(1,2) and compute the distance between them in 3d space.EACH SEPARATION IS CALCULATED USING THE DISTANCE FORUMULA FOR A 3 COORDINATE SYSTEM
 		type (residuetype), intent(inout), dimension(1000) :: arraya
 		type (distancetype), intent(inout), allocatable :: arrayb(:)
-		integer, intent(inout):: filecount, totalsize, totaldist
+		integer, intent(inout):: filecount, totalsize
 		integer, dimension(10), intent(inout) :: restotal
-		integer, dimension(500000), intent(inout) :: abinsize
+		integer, dimension(500), intent(inout) :: abinsize
 		integer :: cabin, cbbin
 		integer :: i, j, n, t, m, h
 		integer :: ostat,cstat,fstat, numstat
@@ -160,23 +167,22 @@ program main
 
 		n = 0
 		t = 1
-		h = 1
 		m = 1
 		id = arraya(1)%pdbid
-		totaldist = (sum(restotal(1:filecount)**2)/2)
-		allocate(arrayb(totaldist))
 
-		open(unit=29, file="prelim.txt", form="formatted", iostat=ostat, access="sequential", action="readwrite", status="replace")
+    do i=1,size(abinsize,1)
+      abinsize(i) = 0
+    enddo
+
+		allocate(arrayb(sum(restotal(1:filecount-1)**2/2) - sum(restotal(1:filecount-1)/2)))
 		!this wont work if there is no available cb, determine for glycines
 
-		do m=1,filecount - 1
-			write(*,*) m
+		do m=1, filecount-1
 			h = t
 			t = t + restotal(m)
-			do i = h , t - 2
-				do j = i + 2, t
+			do i = h + 2 , t - 1
+				do j = h, i - 2
 					!CACA
-					!arrayd(i,j,1) = sqrt(((arraya(i,1)-arraya(j,1))**2)+((arraya(i,2)-arraya(j,2))**2)+((arraya(i,3)-arraya(j,3))**2))
 			    distca = sqrt(sum((arraya(i)%cacoordinate(1:3)-arraya(j)%cacoordinate(1:3))**2))
 					cabin = int(distca * 10)
 					if(cabin > 500) cycle
@@ -202,14 +208,16 @@ program main
 					arrayb(n)%chainid = arraya(i)%chainid
 					arrayb(n)%rightresiduenumber = arraya(j)%residuenumber
 					arrayb(n)%leftresiduenumber = arraya(i)%residuenumber
+					arrayb(n)%rightanchor = arraya(j)%aminoacid
+					arrayb(n)%leftanchor = arraya(i)%aminoacid
+					arrayb(n)%cabin = cabin
+					arrayb(n)%cbbin = cbbin
 					!WRITE THE CABIN NUMBER, CBBIN NUMBER, ATOM1NUMBER, ATOM2NUMBER, DISTANCES, AND PDBID ONLY LESS THAN 50Angstroms
 					call countbins(cabin, abinsize, totalsize)
-					!write(unit=29, fmt='( I4, I4, A4, A1, I4, I4, 4F8.3 )', iostat=fstat) cabin, cbbin, arrayb(n)				
-					!write (*,*) arrayb(n)%pdbid, n
 				enddo
 			enddo
 		enddo
-		write(*,*) n
+    !write(*,*) restotal(1:filecount-1)**2/2
 	end subroutine computeseparations
 
 
@@ -218,31 +226,29 @@ program main
 
 	subroutine countbins(cabin, abinsize, totalsize)
 		integer, intent(inout) ::  cabin, totalsize
-		integer, dimension(500000), intent(inout) :: abinsize
+		integer, dimension(500), intent(inout) :: abinsize
 	!count bins will populate an array which holds integers corresponding to the number of elements which each bin will need to have capacity for
 		abinsize(cabin) = abinsize(cabin) + 1 
 		totalsize = totalsize + 1
-		!write(*,*) cabin, abinsize(cabin), totalsize
 	end subroutine countbins
 
 !_______________integrated up to about this line_______________________
 
-subroutine cabinstructure(totalsize, abinsize, arrayb, totaldist)
+	subroutine cabinstructure(totalsize, abinsize, arrayb)
 	!use this subroutine organizes the ca bin structure, filled with zeroes
 		integer, intent(inout) :: totalsize
 		integer, dimension(:), intent(inout) :: abinsize
 		integer, dimension(size(abinsize,1)) :: abinsizecounter
-		integer, intent(in):: totaldist
-		type (distancetype), intent(inout), dimension(totaldist):: arrayb
+		type (distancetype), intent(inout), dimension(totalsize) :: arrayb
+		type (distancetype), dimension(totalsize) :: arrayc
 		
 
-		character(len=*), parameter :: filename="diracloop.txt"		
-		character(len=53) :: line
+		character(len=*), parameter :: infile="singlysorted.txt"		
 
 		integer :: ostat,fstat,cstat
 		integer :: ostat2,fstat2,cstat2
 		integer :: lstat
-		integer :: i, j, t, last
+		integer :: i, j, t, n
 		integer :: cabin, cbbin
 
 		t = 1 !give this counter a name
@@ -251,21 +257,84 @@ subroutine cabinstructure(totalsize, abinsize, arrayb, totaldist)
 		!using the cabin structure, print to a file the records in bins organized by cabinstructure. include in the record the cabin number, cbbin number, cacb, cbca, anchoring residue by chain, orthogonal cordinates, and pdbid
 		 
 		!loop through the bins to find the locations where the beginning of the cabin record is
-		open(unit=19, file=filename, form="formatted", iostat=ostat, access="direct", action="readwrite", status="replace", recl=57)
-		
+
+		open(unit=19, file=infile, form="formatted", iostat=ostat, access="direct", action="readwrite", status="replace", recl=62)
 		!loop through the array structure arraydist (arrayb), cl=alculate the cabin from the casep and cbbin from cbsep
-		do i=1, size(arrayb,1)
+		do i=1, totalsize
 			cabin = int(arrayb(i)%caseparation * 10)
 			cbbin = int(arrayb(i)%cbseparation * 10)
-			if(cabin == 0) cycle
-			t = sum(abinsize(1:cabin)) - abinsize(cabin) + abinsizecounter(cabin) 
-			write(unit=19, fmt='( I4, I4, A4, A1, I4, I4, 4F8.3 )', iostat=fstat, rec=t) cabin, cbbin, arrayb(i)
+			t = sum(abinsize(1:cabin-1)) + abinsizecounter(cabin) 
+      write(unit=19, fmt='( 2(I4), 2(A4, I4), 4F8.3, A4, A1)', iostat=fstat, rec=t) arrayb(i)
 			abinsizecounter(cabin) = abinsizecounter(cabin) - 1
-			write(*,*) cabin, abinsizecounter(cabin), t
+      write(*,*) arrayb(i)
 		enddo
-		close(unit=19, iostat=cstat)
+		close(unit=19,iostat=cstat)
+
+    call cbbinstructure(abinsize,totalsize)
+
 	end subroutine cabinstructure
 
+
+
+	subroutine cbbinstructure(abinsize, totalsize)
+    integer, intent(inout) :: abinsize(:)
+    integer, intent(inout) :: totalsize
+    integer, dimension(500) :: bbinsize
+    integer, dimension(500) :: bbinsizecounter
+    integer :: i, j, linenum, t, m, cabin, cbbin, width
+    integer :: ostat, fstat, cstat, ostat2, fstat2, cstat2
+    type(distancetype) :: line, record
+    character(len=*), parameter :: infile="singlysorted.txt"
+    character(len=*), parameter :: outfile="doublysorted.txt"
+
+    i = 1
+    t = 0
+    linenum = 1
+    i = 1
+
+    open(unit=19, file=infile, form="formatted", iostat=ostat, access="direct", action="readwrite", status="old", recl=62)
+    open(unit=39, file=outfile, form="formatted", iostat=ostat2, access="direct", action="readwrite", status="replace", recl=62)
+    
+    !go through and make the counts you need
+    do i=1,500
+
+      do m=1,500
+        bbinsize(m) = 0
+        bbinsizecounter(m) = 0
+      enddo
+
+      width = abinsize(i)
+
+      if(width == 0) cycle
+      !within the width, build the bin, write the file, move to the next bin
+      !write an error here for if i /= line%cabin
+      do j=linenum, linenum + width - 1
+        read(unit=19, fmt='( 2(I4), 2(A4, I4), 4F8.3, A4, A1)' , iostat = fstat, rec=j) line
+        cbbin = line%cbbin
+        bbinsize(cbbin) = bbinsize(cbbin) + 1
+      enddo
+
+        bbinsizecounter = bbinsize
+
+      do j = linenum, linenum + width - 1
+        read(unit=19, fmt='( 2(I4), 2(A4, I4), 4F8.3, A4, A1)' , iostat=fstat, rec=j) line
+        cbbin = line%cbbin
+        t = sum(bbinsize(1:cbbin)) - bbinsizecounter(cbbin)
+        t = t + linenum
+        write(unit=39, fmt='( 2(I4), 2(A4, I4), 4F8.3, A4, A1)', iostat=fstat2, rec=t) line
+        bbinsizecounter(cbbin) = bbinsizecounter(cbbin) - 1
+        write(*,*) cbbin, bbinsizecounter(cbbin), j
+      enddo
+
+      linenum = linenum + width
+    enddo
+    
+    close(unit=19, iostat=cstat)
+    close(unit=39, iostat=cstat2)
+
+  end subroutine cbbinstructure
 !the next thing you need to do is to set up the cbbinstructure the same way you did with the cabinstructure. repeat the last two subroutines but for the second filter
 
 end program main
+
+
