@@ -34,6 +34,8 @@ program main
 		character(len=4) :: pdbid 
 		character(len=1) :: chainid
 	end type distancetype
+
+  integer, parameter :: top = 200, bottom = 2
 		
 !the type declarations will remain global because i want them to
 !return and make these allocatable, but for now, initialize them to a very large number
@@ -59,7 +61,7 @@ program main
 		!for subroutine computeseparation
 
 		!first element in abinsize is cabinsize, second is cbbinsize
-		integer, dimension(500) :: abinsize
+		integer, dimension(top) :: abinsize
 		integer, dimension(10) :: restotal
 		integer :: res, filecount, totalsize
 		!an allocatable array to store the information
@@ -158,8 +160,8 @@ program main
 		type (distancetype), intent(inout), allocatable :: arrayb(:)
 		integer, intent(inout):: filecount, totalsize
 		integer, dimension(10), intent(inout) :: restotal
-		integer, dimension(500), intent(inout) :: abinsize
-		integer :: cabin, cbbin
+		integer, dimension(top), intent(inout) :: abinsize
+		integer :: cabin, cbbin, lastbin
 		integer :: i, j, n, t, m, h
 		integer :: ostat,cstat,fstat, numstat
 		character(len=4) :: id
@@ -169,6 +171,7 @@ program main
 		t = 1
 		m = 1
 		id = arraya(1)%pdbid
+    lastbin = 0
 
     do i=1,size(abinsize,1)
       abinsize(i) = 0
@@ -185,12 +188,15 @@ program main
 					!CACA
 			    distca = sqrt(sum((arraya(i)%cacoordinate(1:3)-arraya(j)%cacoordinate(1:3))**2))
 					cabin = int(distca * 10)
-					if(cabin > 500) cycle
+					if(cabin > top) cycle
+          if(cabin < bottom) cycle
+          
 					!CBCB
 					distcb = sqrt(sum((arraya(i)%cbcoordinate(1:3)-arraya(j)%cbcoordinate(1:3))**2))
 					cbbin = int(distcb * 10)
 		
-					if(cbbin > 500) cycle !make this a parameter
+					if(cbbin > top) cycle !make this a parameter
+          if(cbbin < bottom) cycle
 					
 					n = n + 1
 
@@ -213,7 +219,13 @@ program main
 					arrayb(n)%cabin = cabin
 					arrayb(n)%cbbin = cbbin
 					!WRITE THE CABIN NUMBER, CBBIN NUMBER, ATOM1NUMBER, ATOM2NUMBER, DISTANCES, AND PDBID ONLY LESS THAN 50Angstroms
+          if(abinsize(cabin) == 100) then
+            n = n - 1
+            cycle
+          endif
+
 					call countbins(cabin, abinsize, totalsize)
+
 				enddo
 			enddo
 		enddo
@@ -226,7 +238,7 @@ program main
 
 	subroutine countbins(cabin, abinsize, totalsize)
 		integer, intent(inout) ::  cabin, totalsize
-		integer, dimension(500), intent(inout) :: abinsize
+		integer, dimension(top), intent(inout) :: abinsize
 	!count bins will populate an array which holds integers corresponding to the number of elements which each bin will need to have capacity for
 		abinsize(cabin) = abinsize(cabin) + 1 
 		totalsize = totalsize + 1
@@ -259,14 +271,13 @@ program main
 		!loop through the bins to find the locations where the beginning of the cabin record is
 
 		open(unit=19, file=infile, form="formatted", iostat=ostat, access="direct", action="readwrite", status="replace", recl=62)
-		!loop through the array structure arraydist (arrayb), cl=alculate the cabin from the casep and cbbin from cbsep
+		!loop through the array structure arraydist (arrayb), calculate the cabin from the casep and cbbin from cbsep
 		do i=1, totalsize
 			cabin = int(arrayb(i)%caseparation * 10)
 			cbbin = int(arrayb(i)%cbseparation * 10)
 			t = sum(abinsize(1:cabin-1)) + abinsizecounter(cabin) 
       write(unit=19, fmt='( 2(I4), 2(A4, I4), 4F8.3, A4, A1)', iostat=fstat, rec=t) arrayb(i)
 			abinsizecounter(cabin) = abinsizecounter(cabin) - 1
-      write(*,*) arrayb(i)
 		enddo
 		close(unit=19,iostat=cstat)
 
@@ -279,33 +290,48 @@ program main
 	subroutine cbbinstructure(abinsize, totalsize)
     integer, intent(inout) :: abinsize(:)
     integer, intent(inout) :: totalsize
-    integer, dimension(500) :: bbinsize
-    integer, dimension(500) :: bbinsizecounter
+
+    integer, dimension(top + 1) :: init
+    integer, dimension(top) :: bbinsize, bbinsizecounter, bbinsizefinal
     integer :: i, j, linenum, t, m, cabin, cbbin, width
     integer :: ostat, fstat, cstat, ostat2, fstat2, cstat2
+
     type(distancetype) :: line, record
+
     character(len=*), parameter :: infile="singlysorted.txt"
     character(len=*), parameter :: outfile="doublysorted.txt"
+    character(len=*), parameter :: tabfile="lookuptable.txt"
 
+    
+    init(1:top) = 0
     i = 1
     t = 0
     linenum = 1
-    i = 1
 
     open(unit=19, file=infile, form="formatted", iostat=ostat, access="direct", action="readwrite", status="old", recl=62)
     open(unit=39, file=outfile, form="formatted", iostat=ostat2, access="direct", action="readwrite", status="replace", recl=62)
-    
-    !go through and make the counts you need
-    do i=1,500
+    open(unit=37, file=tabfile, form="formatted", iostat=ostat, access="direct", action="readwrite", status="replace", recl=1616)
 
-      do m=1,500
+    !go through and make the counts you need
+
+    do m=1, top
+      write(unit=37, fmt='( I8,200(I8) )', iostat=fstat, rec=m) 0, linenum, init
+    enddo
+
+    do i=1, top
+
+      do m=1, top
         bbinsize(m) = 0
         bbinsizecounter(m) = 0
+        bbinsizefinal(m) = 0  
       enddo
 
       width = abinsize(i)
 
-      if(width == 0) cycle
+      if(width == 0) then
+        write(unit=37, fmt='( 2(I8),200(I8) )', iostat=fstat, rec=i) width, linenum, bbinsize
+        cycle
+      endif
       !within the width, build the bin, write the file, move to the next bin
       !write an error here for if i /= line%cabin
       do j=linenum, linenum + width - 1
@@ -316,6 +342,15 @@ program main
 
         bbinsizecounter = bbinsize
 
+      do k=1, size(bbinsize,1)
+        bbinsizefinal(k) = sum(bbinsize(1:k))
+        if(bbinsize(k) == 0) then
+          bbinsizefinal(k) = 0
+        endif
+      enddo
+
+      write(unit=37, fmt='( 2(I8),200(I8) )', iostat=fstat, rec=i) width, linenum, bbinsizefinal
+
       do j = linenum, linenum + width - 1
         read(unit=19, fmt='( 2(I4), 2(A4, I4), 4F8.3, A4, A1)' , iostat=fstat, rec=j) line
         cbbin = line%cbbin
@@ -323,17 +358,18 @@ program main
         t = t + linenum
         write(unit=39, fmt='( 2(I4), 2(A4, I4), 4F8.3, A4, A1)', iostat=fstat2, rec=t) line
         bbinsizecounter(cbbin) = bbinsizecounter(cbbin) - 1
-        write(*,*) cbbin, bbinsizecounter(cbbin), j
       enddo
 
       linenum = linenum + width
     enddo
-    
+
+    close(unit=37, iostat=cstat)
     close(unit=19, iostat=cstat)
     close(unit=39, iostat=cstat2)
 
   end subroutine cbbinstructure
-!the next thing you need to do is to set up the cbbinstructure the same way you did with the cabinstructure. repeat the last two subroutines but for the second filter
+
+!the cbbin values for each bin need to be saved, as does the cabinsize values in two separate files. save the cabin file as a cabin number, the cbbin number and the count. save the cabin file as it is structured, cabin and count
 
 end program main
 
