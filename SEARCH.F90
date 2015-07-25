@@ -21,12 +21,12 @@ program main
   integer :: argnum
   real :: casep, cbsep, camaxdev, cbmaxdev
   type(distancetype), allocatable :: bins(:)
-  integer :: totalelements
+  integer :: totalelements, limit
   integer, parameter :: binmax = 200
 
   argnum = iargc()
 
-	if(argnum /= 4) stop 
+	if(argnum /= 5) stop 
   !there will be four arguments, casep, cbsep, max deviation ca, max deviation cb
 	call getarg(1,args)
   write(*,*) args
@@ -40,7 +40,10 @@ program main
   call getarg(4,args)
   write(*,*) args
   read(args(1:5), fmt='(F8.3)') cbmaxdev
-  
+	call getarg(5,args)
+	write(*,*) args
+	read(args, fmt='(I4)') limit  
+	write(*,*) ""
   !write(*,*) casep, cbsep, camaxdev, cbmaxdev
 	!write error message for arguments
   call buildlist(bins, totalelements, casep, camaxdev, cbsep, cbmaxdev)
@@ -92,6 +95,7 @@ program main
       bhigh = binmax
     endif
 
+		!write(*,*) cabin, alow, ahigh, cbbin, blow, bhigh
     !open the doubly sorted file
     open(unit=14, file="doublysorted.txt", form="formatted", iostat=ostat, access="direct", action="read", status="old", recl=62)
 
@@ -107,11 +111,17 @@ program main
       totalelements = totalelements + (finish - start)
     enddo
 
-    write(*,*) totalelements
+    write(*,*) "of ",totalelements
     !allocate the bin array
-    if(totalelements > 100) then
-      totalelements = 100
+    if(totalelements /= limit) then
+			if(totalelements < limit) then
+				limit = totalelements
+			endif
+      totalelements = limit
     endif
+		write(*,*) totalelements, " are displayed"
+
+		write(*,*) ""
 
     allocate(bins(totalelements))
 
@@ -126,7 +136,7 @@ program main
       last =  astart + finish
 
       do j=first, last
-        if(l == 100) exit
+        if(l == limit) exit
         read(unit=14, fmt='( 2(I4), 2(A4, I4), 4F8.3, A4, A1)', iostat=fstat, rec=j) bins(l)
         write(*,*) bins(l)
         l = l + 1
