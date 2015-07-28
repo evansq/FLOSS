@@ -1,4 +1,4 @@
-1LVH.pdb
-2M73.pdb
-3CT6.pdb
-4TZI.pdb
+1LVH A
+2M73 A
+3CT6 A
+4TZI A
