@@ -14,17 +14,16 @@
 !
 !CALL THE PROGRAM ONCE ON A FILE WITH A LIST OF PDB FILES, THEN CALL EACH SUBROUTINE ON EACH PDB FILE INDEPENDENTLY, KEEPING NECESSARY GLOBAL VARIABLES TO CHARACTERIZE THE OVERAL STRUCTURE
 !rewrite captured info as defined types residuetype(int resnumber, char chainid, char pdbid, char aa, real(3) cacoord,cbcoord) and dist(int resnum1, int resnum2, real caca,cbcb,cacb,cbca, char pdbid, char chainid) as globals (construct, declare as allocatable)
+module floss
 
-program main
-!the type definitions will remain global because i want them to
-	type residuetype
+	type residuetype !type definition which stores the information for individual residues
 		integer :: residuenumber
 		character(len=1) :: chainid
 		character(len=4) :: pdbid, aminoacid
 		real,dimension(3) :: cacoordinate, cbcoordinate
 	end type residuetype
 
-	type distancetype
+	type distancetype!type definition which stores the information for pair residue distances
 		integer ::  cabin, cbbin
 		character(len=4) :: rightanchor
 		integer :: rightresiduenumber 
@@ -35,89 +34,89 @@ program main
 		character(len=1) :: chainid
 	end type distancetype
 
-  integer, parameter :: top = 200, bottom = 2
-		
-!the type declarations will remain global because i want them to
-!return and make these allocatable, but for now, initialize them to a very large number
-!return and initialize these elements to 0
-!
-! ex: arraydist(:)%[element]) = " " ... in loop
-!
-	call build
-
 	contains
-	
-	subroutine build
-		type (residuetype), dimension(1000) :: arrayres
-		type (distancetype), dimension(:), allocatable :: arraydist
+		subroutine filecounter(pdbfilename, chainid, top, bottom, filemax, filecount, restotal, abinsize)
+		character(len=8), intent(in) ::pdbfilename
+		character(len=1), intent(in) :: chainid
+		integer, intent(in) :: top, filemax, filecount, bottom
+		integer, dimension(filemax), intent(inout) :: restotal
+		integer, dimension(top), intent(inout) :: abinsize
+		real,dimension(3) :: rightanchor, leftanchor				!coordinates of left and right anchoring residues
+		real :: distca																			!real value for computed distance
+		integer :: cabin, head, tail												!c alpha bin number
+		integer :: n, ostat, fstat, cstat		
+		integer :: i, j, k																	!n: counter for number of residues in file being used
+		character(len=4) :: atomtype												!atom type	
+		character(len=6) :: rectype													!record type
+		character(len=3) :: residue													!residue name (3 letter)
+		character(len=78) :: line														!pdb record
+		character(len=1) :: chain														!chain id at record
 
-		!for the current subroutine
-		character(len=4) :: pdbid
-		character(len=1) :: chainid
-		character(len=200) :: pdbfilename, allpdbs
-		integer :: ostat,cstat,fstat
-		integer :: argnum, indexnum
+		n = 0
+		tail = 0
+		head = 0
 
-		!for subroutine computeseparation
-
-		!first element in abinsize is cabinsize, second is cbbinsize
-		integer, dimension(top) :: abinsize
-		integer, dimension(10) :: restotal
-		integer :: res, filecount, totalsize
-		!an allocatable array to store the information
-
-		!initialization of necessary variables for subsequent use
-		totalsize = 0
-		res = 1
-		filecount = 0
-
-		!process the commandline arguments
-		argnum = iargc()
-		if(argnum /= 1) stop 
-		call getarg(1,allpdbs)
-		indexnum = index(allpdbs,'.txt')
-		if(indexnum == 0) then
-			write(*,*) "the file", allpdbs, " could not be opened, proceed 	with a txt file"
-			stop
-		endif
-	
-		!read through the command line file for each pdbid and chainid
-		open(unit=15, file=allpdbs, iostat=ostat, access="sequential", 	action="read", status="old")
+		open(unit=11, file=pdbfilename, iostat=ostat, access="sequential", action="readwrite", status="old")
+		!PLACE YOUR HEAD POINTER
+		do
+			read(unit=11, fmt="( A )", iostat=fstat) line
+			head = head + 1
+			if (fstat /= 0) exit !condition for end of file
+			read(line(1:6), fmt="( A )") rectype
+			if (rectype == "ATOM  ") exit
+		enddo
+		!PLACE YOUR TAIL POINTER, AND COUNT THE NUMBER OF RESIDUES
+		
+		tail = head
 
 		do
-			filecount = filecount + 1	
-			read(unit=15,fmt="( A4,1X,A1 )", iostat=fstat) pdbid, chainid
-			pdbfilename = pdbid//'.pdb' !add in a pathway specifier
-			if(fstat /= 0) exit
-			call readinpoints(pdbfilename, chainid, arrayres, restotal, res, filecount)
+			read(unit=11, fmt="( A )", iostat=fstat) line
+			tail = tail + 1
+			if (fstat /= 0) exit !condition for end of file
+			read(line(1:6), fmt="( A )") rectype
+			if (rectype == "TER   ") exit
+			if (rectype /= "ATOM  ") cycle			
+			read(line(22:22), fmt="( A )") chain
+			if(chain /= chainid) exit
+			read(line(13:16), fmt="( A )") atomtype
+			if (atomtype == " CA ") then
+				n = n + 1
+				read(line(18:20), fmt="( A )") residue
+				if(residue == "GLY ") then
+					n = n - 1
+				endif
+			endif
 		enddo
-		close(unit=15, iostat=cstat)
-		call computeseparations(arrayres, arraydist, filecount, restotal, totalsize, abinsize)
-		call cabinstructure(totalsize, abinsize, arraydist)
-
-	end subroutine build
+		restotal(filecount) = n
+		close(unit=11, iostat=cstat)
+	end subroutine filecounter
 
 
 
 
-	subroutine readinpoints(pdbfilename, chain2, arraya, restotal, res, filecount)
-	!readinpoints takes in the pdb files,reads them for the xyz location of the ca(1,2)/cb(1,2) and passes them to computeseparations to determine the values for each index
-		character(len=8), intent(in) ::pdbfilename
-		character(len=1), intent(in) :: chain2
-		type (residuetype), intent(inout), dimension(1000) :: arraya
-		integer, dimension(10), intent(inout) :: restotal
-		integer, intent(inout) :: res, filecount
-		
-		integer :: n, ostat, fstat, cstat
+	subroutine firstpass(pdbfilename, chainid, top, bottom, filemax, &
+	totalsize, filenumber, filecount, arrayres, restotal, &
+	abinsize, abinsizecounter)
+	!takes in the pdb files, reads them for the xyz location of the ca(1,2)/cb(1,2) and passes them to bincounts to populate the array of bincounts to allocate arraydist
+		character(len=8), intent(in) :: pdbfilename
+		character(len=1), intent(in) :: chainid
+		integer, intent(in) :: top, bottom, filemax, totalsize, filenumber, filecount
+		type (residuetype), intent(inout), allocatable :: arrayres(:)
+		integer, intent(inout) :: restotal(filemax)
+		integer, intent(inout) :: abinsize(top)
+		integer, intent(inout) :: abinsizecounter(top)
+
+		integer :: n, ostat, fstat, cstat, alloc
 		character(len=4) :: atomtype
 		character(len=6) :: rectype
 		character(len=3) :: residue
 		character(len=78) :: line	
 		character(len=1) :: chain
 		character(len=4) :: pdbid
-	
+
+		allocate(arrayres(restotal(filenumber)))
 		pdbid = pdbfilename(1:4)
-		n = 0
+		n = 1
 
 		open(unit=11, file=pdbfilename, iostat=ostat, access="sequential", action="readwrite", status="old")
 
@@ -132,164 +131,239 @@ program main
 			read(line(18:20), fmt="( A )") residue
 			if(residue == "GLY ") cycle !ignore the glycines
 			read(line(22:22), fmt="( A )") chain
-			if(chain /= chain2) exit
-			arraya(res+n)%aminoacid = residue
-			read(line(23:26), fmt="( I4 )") arraya(res+n)%residuenumber
-			read(line(31:54) , fmt="( 3F8.3 )") arraya(res+n)%cacoordinate(1:3)
-			arraya(res+n)%pdbid = pdbid
-			arraya(res+n)%chainid = chain
+			if(chain /= chainid) exit
+			arrayres(n)%aminoacid = residue
+			read(line(23:26), fmt="( I4 )") arrayres(n)%residuenumber
+			read(line(31:54) , fmt="( 3F8.3 )") arrayres(n)%cacoordinate(1:3)
+			arrayres(n)%pdbid = pdbid
+			arrayres(n)%chainid = chain
 			!FINDS THE CB COORDINATES AHEAD OF THE CURRENT LINE
 			do
 				read(unit=11, fmt="( A )", iostat=fstat) line
 				read(line(13:16), fmt="( A )") atomtype
 				if (atomtype == " CB ") then
-					read(line(31:54) , fmt="( 3F8.3 )") arraya(res+n)%cbcoordinate(1:3)
+					read(line(31:54) , fmt="( 3F8.3 )") arrayres(n)%cbcoordinate(1:3)
 					exit
 				endif
 			enddo 
 			n = n + 1 
 		enddo
-		res = res + n
-		restotal(filecount) = n
-		close(unit=11, iostat=cstat)	
-	end subroutine readinpoints	
 
-	subroutine computeseparations(arraya, arrayb, filecount, restotal, totalsize, abinsize)
-		!access the xyz coordinates for the ca(1,2) and compute the distance between them in 3d space.EACH SEPARATION IS CALCULATED USING THE DISTANCE FORUMULA FOR A 3 COORDINATE SYSTEM
-		type (residuetype), intent(inout), dimension(1000) :: arraya
-		type (distancetype), intent(inout), allocatable :: arrayb(:)
-		integer, intent(inout):: filecount, totalsize
-		integer, dimension(10), intent(inout) :: restotal
+		call bincounts(top, bottom, filemax, totalsize, filenumber, &
+		filecount, arrayres, restotal, abinsize, abinsizecounter)
+
+		close(unit=11, iostat=cstat)
+		deallocate(arrayres)
+	end subroutine firstpass
+
+	subroutine secondpass(pdbfilename, chainid, top, bottom, filemax, &
+	totalsize, filenumber, filecount, arrayres, arraydist, restotal, &
+	abinsize, abinsizecounter)
+	!takes in the pdb files,reads them for the xyz location of the ca(1,2)/cb(1,2) and passes them to computeseparations to populate arraydist and build the singlysorted file
+		character(len=8), intent(in) :: pdbfilename
+		character(len=1), intent(in) :: chainid
+		integer, intent(in) :: top, bottom, filemax, totalsize, filenumber, filecount
+		type (residuetype), intent(inout), allocatable :: arrayres(:)
+		type (distancetype),  intent(inout), allocatable :: arraydist(:)
+		integer, intent(inout) :: restotal(filemax)
+		integer, intent(inout) :: abinsize(top)
+		integer, intent(inout) :: abinsizecounter(top)
+
+		integer :: n, ostat, fstat, cstat, alloc
+		character(len=4) :: atomtype
+		character(len=6) :: rectype
+		character(len=3) :: residue
+		character(len=78) :: line	
+		character(len=1) :: chain
+		character(len=4) :: pdbid
+
+		allocate(arrayres(restotal(filenumber)))
+		pdbid = pdbfilename(1:4)
+		n = 1
+
+		open(unit=11, file=pdbfilename, iostat=ostat, access="sequential", &
+		action="readwrite", status="old")
+
+		do 
+			!for all atoms in file | read the first anchor
+			read(unit=11, fmt="( A )", iostat=fstat) line
+			if (fstat /= 0) exit !condition for end of file
+			read(line(1:6), fmt="( A )") rectype
+			if (rectype /= "ATOM  ") cycle
+			read(line(13:16), fmt="( A )") atomtype
+			if (atomtype /= " CA ") cycle !check for CA !add space to the other side, capture 4
+			read(line(18:20), fmt="( A )") residue
+			if(residue == "GLY ") cycle !ignore the glycines
+			read(line(22:22), fmt="( A )") chain
+			if(chain /= chainid) exit
+			arrayres(n)%aminoacid = residue
+			read(line(23:26), fmt="( I4 )") arrayres(n)%residuenumber
+			read(line(31:54) , fmt="( 3F8.3 )") arrayres(n)%cacoordinate(1:3)
+			arrayres(n)%pdbid = pdbid
+			arrayres(n)%chainid = chain
+			!FINDS THE CB COORDINATES AHEAD OF THE CURRENT LINE
+			do
+				read(unit=11, fmt="( A )", iostat=fstat) line
+				read(line(13:16), fmt="( A )") atomtype
+				if (atomtype == " CB ") then
+					read(line(31:54) , fmt="( 3F8.3 )") arrayres(n)%cbcoordinate(1:3)
+					exit
+				endif
+			enddo 
+			n = n + 1 
+		enddo
+
+		call computeseparations(top, bottom, filemax, totalsize, &
+		filenumber, filecount, arrayres, arraydist, restotal, &
+		abinsize, abinsizecounter)
+
+		close(unit=11, iostat=cstat)
+		deallocate(arrayres)
+	end subroutine secondpass
+			
+	
+
+	subroutine bincounts(top, bottom, filemax, totalsize, filenumber, &
+	filecount, arrayres, restotal, abinsize, abinsizecounter)
+		!access the xyz coordinates for the ca(1,2) and compute the distance between them in 3d space. EACH SEPARATION IS CALCULATED USING THE DISTANCE FORUMULA FOR A 3 COORDINATE SYSTEM
+		integer, intent(in) :: filemax
+		integer, intent(in) :: filenumber, totalsize, filecount
+		integer, intent(in) :: top, bottom
+		integer, dimension(filemax), intent(inout) :: restotal
+		type (residuetype), intent(in) :: arrayres(restotal(filenumber))
 		integer, dimension(top), intent(inout) :: abinsize
-		integer :: cabin, cbbin, lastbin
-		integer :: i, j, n, t, m, h
-		integer :: ostat,cstat,fstat, numstat
-		character(len=4) :: id
+		integer, dimension(top), intent(inout) :: abinsizecounter
+		integer, dimension(top) :: temp !temporary bin counter
+		integer :: cabin, cbbin, counter
+		integer :: i, j
+		integer :: ostat,cstat,fstat
 		real :: distca, distcb
 
-		n = 0
-		t = 1
-		m = 1
-		id = arraya(1)%pdbid
-    lastbin = 0
+		counter = 0
+		temp(1:top) = 0
 
-    do i=1,size(abinsize,1)
-      abinsize(i) = 0
-    enddo
+		do i = 1, restotal(filenumber) - 2
+			do j = i + 2, restotal(filenumber)
+				!CACA
+			  distca = sqrt(sum((arrayres(i)%cacoordinate(1:3)-arrayres(j)%cacoordinate(1:3))**2))
+				cabin = ceiling((distca * 10) - 0.5)
 
-		allocate(arrayb(sum(restotal(1:filecount-1)**2/2) - sum(restotal(1:filecount-1)/2)))
-		!this wont work if there is no available cb, determine for glycines
+				if(distca*10 > real(top)) cycle
+		    if(distca*10 < real(bottom)) cycle
+		    
+				!CBCB
+				distcb = sqrt(sum((arrayres(i)%cbcoordinate(1:3)-arrayres(j)%cbcoordinate(1:3))**2))
+				cbbin = ceiling((distcb * 10) - 0.5)
 
-		do m=1, filecount-1
-			h = t
-			t = t + restotal(m)
-			do i = h + 2 , t - 1
-				do j = h, i - 2
-					!CACA
-			    distca = sqrt(sum((arraya(i)%cacoordinate(1:3)-arraya(j)%cacoordinate(1:3))**2))
-					cabin = int(distca * 10)
-					if(cabin > top) cycle
-          if(cabin < bottom) cycle
-          
-					!CBCB
-					distcb = sqrt(sum((arraya(i)%cbcoordinate(1:3)-arraya(j)%cbcoordinate(1:3))**2))
-					cbbin = int(distcb * 10)
-		
-					if(cbbin > top) cycle !make this a parameter
-          if(cbbin < bottom) cycle
-					
-					n = n + 1
+				if(distcb*10 .gt. real(top)) cycle
+				if(distcb*10 .lt. real(bottom)) cycle
 
-					arrayb(n)%cbseparation = distcb
-					arrayb(n)%caseparation = distca
-
-					!CACB
-					arrayb(n)%cacross = sqrt(sum((arraya(i)%cacoordinate(1:3)-arraya(j)%cbcoordinate(1:3))**2))
-
-					!CBCA
-					arrayb(n)%cbcross = sqrt(sum((arraya(i)%cbcoordinate(1:3)-arraya(j)%cacoordinate(1:3))**2))
-
-					!save the residue numbers (left and right)
-					arrayb(n)%pdbid = arraya(i)%pdbid
-					arrayb(n)%chainid = arraya(i)%chainid
-					arrayb(n)%rightresiduenumber = arraya(j)%residuenumber
-					arrayb(n)%leftresiduenumber = arraya(i)%residuenumber
-					arrayb(n)%rightanchor = arraya(j)%aminoacid
-					arrayb(n)%leftanchor = arraya(i)%aminoacid
-					arrayb(n)%cabin = cabin
-					arrayb(n)%cbbin = cbbin
-					!WRITE THE CABIN NUMBER, CBBIN NUMBER, ATOM1NUMBER, ATOM2NUMBER, DISTANCES, AND PDBID ONLY LESS THAN 50Angstroms
-          if(abinsize(cabin) == 100) then
-            n = n - 1
-            cycle
-          endif
-
-					call countbins(cabin, abinsize, totalsize)
-
+				abinsize(cabin) = abinsize(cabin) + 1
 				enddo
 			enddo
-		enddo
-    !write(*,*) restotal(1:filecount-1)**2/2
+		end subroutine bincounts
+
+		subroutine computeseparations(top, bottom, filemax, totalsize, &
+		filenumber, filecount, arrayres, arraydist, restotal, &
+		abinsize, abinsizecounter)
+			integer, intent(in) :: filemax
+			integer, intent(in) :: filenumber, totalsize, filecount
+			integer, intent(in) :: top, bottom
+			integer, intent(inout) :: restotal(filecount)
+			type (residuetype), intent(in) :: arrayres(restotal(filenumber))
+			type (distancetype), intent(inout), allocatable :: arraydist(:)
+			integer, dimension(top), intent(inout) :: abinsize
+			integer, dimension(top), intent(inout) :: abinsizecounter
+			integer, dimension(top) :: temp !temporary bin counter
+			integer :: cabin, cbbin, counter
+			integer :: i, j
+			integer :: ostat,cstat,fstat
+			real :: distca, distcb
+
+			counter = 0
+			allocate(arraydist(restotal(filenumber)*((restotal(filenumber) - 1))/2))
+
+			do i = 1, restotal(filenumber) - 2
+				do j = i + 2, restotal(filenumber)
+					!CACA
+			  	distca = sqrt(sum((arrayres(i)%cacoordinate(1:3)-arrayres(j)%cacoordinate(1:3))**2))
+					cabin = ceiling((distca * 10) - 0.5)
+
+					if(distca*10 > real(top)) cycle
+			    if(distca*10 < real(bottom)) cycle
+		    
+					!CBCB
+					distcb = sqrt(sum((arrayres(i)%cbcoordinate(1:3)-arrayres(j)%cbcoordinate(1:3))**2))
+					cbbin = ceiling((distcb * 10) - 0.5)
+					if(distcb*10 .lt. real(bottom)) cycle
+					if(distcb*10 .gt. real(top)) cycle
+
+					counter = counter + 1
+					arraydist(counter)%cbseparation = distcb
+					arraydist(counter)%caseparation = distca
+	
+					!CACB
+					arraydist(counter)%cacross = sqrt(sum((arrayres(i)%cacoordinate(1:3)-arrayres(j)%cbcoordinate(1:3))**2))
+	
+					!CBCA
+					arraydist(counter)%cbcross = sqrt(sum((arrayres(i)%cbcoordinate(1:3)-arrayres(j)%cacoordinate(1:3))**2))
+	
+					!save the residue numbers (left and right)
+					arraydist(counter)%pdbid = arrayres(i)%pdbid
+					arraydist(counter)%chainid = arrayres(i)%chainid
+					arraydist(counter)%rightresiduenumber = arrayres(j)%residuenumber
+					arraydist(counter)%leftresiduenumber = arrayres(i)%residuenumber
+					arraydist(counter)%rightanchor = arrayres(j)%aminoacid
+					arraydist(counter)%leftanchor = arrayres(i)%aminoacid
+					arraydist(counter)%cabin = cabin
+					arraydist(counter)%cbbin = cbbin
+					!WRITE THE CABIN NUMBER, CBBIN NUMBER, ATOM1NUMBER, ATOM2NUMBER, DISTANCES, AND PDBID ONLY LESS THAN 50Angstroms
+				enddo				
+			enddo
+		  call cabinstructure(counter, totalsize, top, abinsize, arraydist, abinsizecounter)
+			deallocate(arraydist)
 	end subroutine computeseparations
 
 
-
-
-
-	subroutine countbins(cabin, abinsize, totalsize)
-		integer, intent(inout) ::  cabin, totalsize
-		integer, dimension(top), intent(inout) :: abinsize
-	!count bins will populate an array which holds integers corresponding to the number of elements which each bin will need to have capacity for
-		abinsize(cabin) = abinsize(cabin) + 1 
-		totalsize = totalsize + 1
-	end subroutine countbins
-
-!_______________integrated up to about this line_______________________
-
-	subroutine cabinstructure(totalsize, abinsize, arrayb)
+	subroutine cabinstructure(counter, totalsize, top, abinsize, arraydist, abinsizecounter)
 	!use this subroutine organizes the ca bin structure, filled with zeroes
-		integer, intent(inout) :: totalsize
-		integer, dimension(:), intent(inout) :: abinsize
-		integer, dimension(size(abinsize,1)) :: abinsizecounter
-		type (distancetype), intent(inout), dimension(totalsize) :: arrayb
+		integer, intent(in) :: counter, top, totalsize
+		integer, dimension(top), intent(inout) :: abinsize
+		integer, dimension(top), intent(inout) :: abinsizecounter
+		type (distancetype), intent(inout), dimension(totalsize) :: arraydist
 		type (distancetype), dimension(totalsize) :: arrayc
 		
 
 		character(len=*), parameter :: infile="singlysorted.txt"		
 
-		integer :: ostat,fstat,cstat
+		integer :: ostat,fstat,cstat, alloc
 		integer :: ostat2,fstat2,cstat2
 		integer :: lstat
 		integer :: i, j, t, n
 		integer :: cabin, cbbin
 
 		t = 1 !give this counter a name
-		abinsizecounter = abinsize
 
 		!using the cabin structure, print to a file the records in bins organized by cabinstructure. include in the record the cabin number, cbbin number, cacb, cbca, anchoring residue by chain, orthogonal cordinates, and pdbid
 		 
 		!loop through the bins to find the locations where the beginning of the cabin record is
 
-		open(unit=19, file=infile, form="formatted", iostat=ostat, access="direct", action="readwrite", status="replace", recl=62)
-		!loop through the array structure arraydist (arrayb), calculate the cabin from the casep and cbbin from cbsep
-		do i=1, totalsize
-			cabin = int(arrayb(i)%caseparation * 10)
-			cbbin = int(arrayb(i)%cbseparation * 10)
-			t = sum(abinsize(1:cabin-1)) + abinsizecounter(cabin) 
-      write(unit=19, fmt='( 2(I4), 2(A4, I4), 4F8.3, A4, A1)', iostat=fstat, rec=t) arrayb(i)
+		open(unit=19, file=infile, form="formatted", iostat=ostat, access="direct", action="readwrite", status="old", recl=62)
+		!loop through the array structure arraydist (arraydist), calculate the cabin from the casep and cbbin from cbsep
+		do i=1, counter
+			cabin = arraydist(i)%cabin
+			t = sum(abinsize(1:cabin-1)) + abinsizecounter(cabin)
+      write(unit=19, fmt="( 2(I4), 2(A4, I4), 4F8.3, A4, A1)", iostat=fstat, rec=t) arraydist(i)
 			abinsizecounter(cabin) = abinsizecounter(cabin) - 1
 		enddo
 		close(unit=19,iostat=cstat)
-
-    call cbbinstructure(abinsize,totalsize)
-
 	end subroutine cabinstructure
 
 
-
-	subroutine cbbinstructure(abinsize, totalsize)
+	subroutine cbbinstructure(totalsize, top, abinsize)
     integer, intent(inout) :: abinsize(:)
     integer, intent(inout) :: totalsize
+		integer, intent(in) :: top
 
     integer, dimension(top + 1) :: init
     integer, dimension(top) :: bbinsize, bbinsizecounter, bbinsizefinal
@@ -349,10 +423,12 @@ program main
         endif
       enddo
 
-      write(unit=37, fmt='( 2(I8),200(I8) )', iostat=fstat, rec=i) width, linenum, bbinsizefinal
+      write(unit=37, fmt='( 2(I8),200(I8) )', iostat=fstat, rec=i) &
+			width, linenum, bbinsizefinal
 
       do j = linenum, linenum + width - 1
-        read(unit=19, fmt='( 2(I4), 2(A4, I4), 4F8.3, A4, A1)' , iostat=fstat, rec=j) line
+        read(unit=19, fmt='( 2(I4), 2(A4, I4), 4F8.3, A4, A1)' , &
+				iostat=fstat, rec=j) line
         cbbin = line%cbbin
         t = sum(bbinsize(1:cbbin)) - bbinsizecounter(cbbin)
         t = t + linenum
@@ -371,6 +447,105 @@ program main
 
 !the cbbin values for each bin need to be saved, as does the cabinsize values in two separate files. save the cabin file as a cabin number, the cbbin number and the count. save the cabin file as it is structured, cabin and count
 
+!WRITE IN THE COMMENTS FOR EACH VARIABLE SO TH
+end module floss
+
+
+program main
+	use floss
+
+	character(len=4) :: pdbid												!4 character pdb id
+	character(len=1) :: chainid											!1 character chain id
+	character(len=*), parameter :: txt = '.txt' 		!txt extension parameter
+	real, parameter :: maximum = 20.0 							!maximum angstrom distance
+	real, parameter :: resolution = 0.10						!detail
+	integer, parameter :: top = int(maximum/resolution) 	!maximum number of calpha bins
+	real, parameter :: minimum = 	4.0								!minimum angstrom distance
+	integer, parameter :: bottom = int(minimum/resolution) !minimum number of allowable cabin
+	integer, parameter :: filemax = 1000						!maximum number of files to be read
+	character(len=200) :: pdbfilename, allpdbs			!pdbfilename: stores the name of the pdb file !capture the file name argument 
+	integer :: ostat,cstat,fstat 										!file iostat carriers o:open, c:close, f:in use file
+	integer :: argnum, indexnum 										!argnum: iargc carrier, the number of arguments given in the command line !
+	integer, dimension(top) :: abinsize 						!array structure stores the cabin with its binsize
+	integer, dimension(top) :: abinsizecounter	!counter for each cabin
+	integer ::filecount, totalsize 									!filecount: total number of files opened, totalsize: total number of distances calculated
+	integer :: filenumber														!filenumber for indexing through restotal array to define size of arrayres
+	integer, dimension(filemax) :: restotal 				!array structure stores the total number of residues in each file in order of processing
+	type (residuetype), dimension(:), allocatable :: arrayres		!array structure stores the residues of each pdbfile
+	type (distancetype), dimension(:), allocatable :: arraydist !array stores the distances between each residue pair in a single pdb file
+
+	!initialization of necessary variables
+	restotal(1:filemax) = 0
+	abinsize(1:top) = 0
+	abinsizecounter = abinsize
+	filecount = 0
+	
+	!process the commandline arguments
+	argnum = iargc()
+	if(argnum /= 1) stop 
+	call getarg(1,allpdbs)
+	indexnum = index(allpdbs,txt)
+	if(indexnum == 0) then
+		write(*,*) "the file", allpdbs, &
+		" could not be opened, proceed 	with a txt file"
+		stop
+	endif
+
+	!read through the command line file for each pdbid and chainid
+	open(unit=15, file=allpdbs, iostat=ostat, & 
+	access="sequential", 	action="read", status="old")
+
+	do i=1, filemax
+		filecount = filecount + 1	
+		read(unit=15,fmt="( A4,1X,A1 )", iostat=fstat) pdbid, chainid
+		pdbfilename = pdbid//'.pdb' !ADD IN A PATHWAY SPECIFIER
+
+		if(fstat /= 0) then
+			filecount = filecount - 1
+			exit
+		endif
+
+		call filecounter(pdbfilename, chainid, top, bottom, filemax, filecount, restotal, abinsize)
+		write(*,*) "file ", filecount, " completed, with ", &
+		restotal(filecount), "residues"
+	enddo
+	
+
+	totalsize = sum((restotal(1:filecount)*(restotal(1:filecount) - 1)/2))
+
+	rewind 15
+
+	do	i=1,filecount
+		filenumber = i
+		read(unit=15,fmt="( A4,1X,A1 )", iostat=fstat) pdbid, chainid
+		pdbfilename = pdbid//'.pdb'
+		call firstpass(pdbfilename, chainid, top, bottom, filemax, &
+		totalsize, filenumber, filecount, arrayres, restotal, &
+		abinsize, abinsizecounter)
+	enddo
+
+	abinsizecounter = abinsize
+	rewind 15
+
+	do	i=1,filecount
+		filenumber = i
+		read(unit=15,fmt="( A4,1X,A1 )", iostat=fstat) pdbid, chainid
+		pdbfilename = pdbid//'.pdb'
+		call secondpass(pdbfilename, chainid, top, bottom, filemax, &
+		totalsize, filenumber, filecount, arrayres, arraydist, restotal, &
+		abinsize, abinsizecounter)
+		write(*,*) sum(abinsizecounter(1:top)), sum(abinsize(1:top))
+	enddo
+
+	call cbbinstructure(totalsize, top, abinsize)
+	close(unit=15, iostat=cstat)
 end program main
+
+
+
+
+
+
+
 
 
