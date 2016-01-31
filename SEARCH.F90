@@ -4,71 +4,73 @@
 !FOR BYSTROFF LAB GROUP 
 !TO BE INTEGRATED INTO INTERACTIVE ROSETTA
 
-
-program main
-  type distancetype
-		integer ::  cabin, cbbin
-		character(len=4) :: rightanchor
-		integer :: rightresiduenumber 
-		character(len=4) ::  leftanchor
-		integer :: leftresiduenumber
-		real :: caseparation, cbseparation, cacross, cbcross
-		character(len=4) :: pdbid 
-		character(len=1) :: chainid
-	end type distancetype
-
-  character(len=8) :: args
-  integer :: argnum
-  real :: casep, cbsep, camaxdev, cbmaxdev
-  type(distancetype), allocatable :: bins(:)
-  integer :: totalelements, limit
-  integer, parameter :: binmax = 200
-
-  argnum = iargc()
-
-	if(argnum /= 5) stop 
-  !there will be four arguments, casep, cbsep, max deviation ca, max deviation cb
-	call getarg(1,args)
-  write(*,*) args
-  read(args(1:5), fmt='(F8.3)') casep
-  call getarg(2,args)
-  write(*,*) args
-  read(args(1:5), fmt='(F8.3)') cbsep
-  call getarg(3,args)
-  write(*,*) args
-  read(args(1:5), fmt='(F8.3)') camaxdev
-  call getarg(4,args)
-  write(*,*) args
-  read(args(1:5), fmt='(F8.3)') cbmaxdev
-	call getarg(5,args)
-	write(*,*) args
-	read(args, fmt='(I4)') limit  
-	write(*,*) ""
-  !write(*,*) casep, cbsep, camaxdev, cbmaxdev
-	!write error message for arguments
-  call buildlist(bins, totalelements, casep, camaxdev, cbsep, cbmaxdev)
-  !call buildcbbinlist(bins, totalelements, cbsep, cbmaxdev)
-  call printlist(totalelements, bins)
-  !generate the list of cabins to vet for distances
+module search
   contains
-  
-  subroutine buildlist(bins, totalelements, casep, cadev, cbsep, cbdev)
-    !take in separation and deviation and pick out the cabins
+  subroutine foo(casep, cbsep, camaxdev, cbmaxdev, limit, length, lendev)
 
+    real, intent(in) :: casep, cbsep, camaxdev, cbmaxdev
+    integer, intent(in) :: limit, length, lendev
+    integer :: totalelements
+    integer :: ostat
+    character(len=*), parameter :: filename="binfile.txt"
+
+    !there will be four arguments, casep, cbsep, max deviation ca, max deviation cb
+    write(*,*) casep
+		
+    write(*,*) cbsep
+		
+    write(*,*) camaxdev
+		
+    write(*,*) cbmaxdev
+		
+    write(*,*) limit
+
+    write(*,*) length
+
+    write(*,*) lendev
+
+    write(*,*) ""
+		
+    open(unit=29, file=filename, form="formatted", iostat=ostat, access="sequential", action="readwrite", status="replace")
+
+    call buildlist(totalelements, casep, camaxdev, cbsep, cbmaxdev, limit)
+    !call buildcbbinlist(bins, totalelements, cbsep, cbmaxdev)
+    call printlist(totalelements,length, lendev)
+    !generate the list of cabins to vet for distances 
+  end subroutine foo
+
+  subroutine buildlist(totalelements, casep, cadev, cbsep, cbdev, limit)
+    !take in separation and deviation and pick out the cabins
+    type distancetype
+      integer::  cabin, cbbin
+      character(len=4) :: rightanchor
+      integer :: rightresiduenumber 
+      character(len=4) ::  leftanchor
+      integer :: leftresiduenumber
+      real :: caseparation, cbseparation, cacross, cbcross
+      character(len=4) :: pdbid 
+      character(len=1) :: chainid
+      integer :: length
+    end type distancetype
+
+    integer, parameter :: binmax = 200
+    type(distancetype) :: bin
     real, intent(in) :: casep, cadev, cbsep, cbdev
     integer, intent(inout) :: totalelements
+    integer, intent(in) :: limit
     integer :: cabin, cbbin
-    type(distancetype), allocatable, intent(inout) :: bins(:)
-    integer, dimension(202) :: line
+    integer, dimension(binmax + 2) :: line
     integer :: ostat,cstat,fstat
     integer :: ostat2,cstat2,fstat2
-    integer :: i, n, l
+    integer :: fstat3
+    integer :: i, l
     integer :: alow, ahigh, blow, bhigh, first, last, start, finish, astart
-    
+
     l = 1
     totalelements = 0
     start = 0
     finish = 0
+
     !calculate the lower and upper bounds for bin selection
     cabin = ceiling(casep * 10 - 0.5)
     alow = ceiling(casep*10 - ceiling(cadev*10 - 0.5) - 0.5)
@@ -79,7 +81,7 @@ program main
     bhigh = ceiling(cbsep*10 + ceiling(cbdev*10 - 0.5) - 0.5)
 
     !conditionals
-    if(alow < 1) then
+    if(alow < 1 ) then !set less than bottom
       alow = 1
     endif
     
@@ -95,9 +97,9 @@ program main
       bhigh = binmax
     endif
 
-		!write(*,*) cabin, alow, ahigh, cbbin, blow, bhigh
+    !write(*,*) cabin, alow, ahigh, cbbin, blow, bhigh
     !open the doubly sorted file
-    open(unit=14, file="doublysorted.txt", form="formatted", iostat=ostat, access="direct", action="read", status="old", recl=62)
+    open(unit=14, file="doublysorted.txt", form="formatted", iostat=ostat, access="direct", action="read", status="old", recl=66)
 
     !open the abinsize file
     open(unit=19, file="lookuptable.txt", form="formatted", iostat=ostat2, access="direct", action="read", status="old", recl=1616)
@@ -111,34 +113,26 @@ program main
       totalelements = totalelements + (finish - start)
     enddo
 
-    write(*,*) "of ",totalelements
-    !allocate the bin array
-    if(totalelements /= limit) then
-			if(totalelements < limit) then
-				limit = totalelements
-			endif
-      totalelements = limit
-    endif
-		write(*,*) totalelements, " are displayed"
-
-		write(*,*) ""
-
-    allocate(bins(totalelements))
+    write(*,*) ""
 
     do i=alow,ahigh
       read(unit=19, fmt='( 2(I8),200(I8) )', iostat=fstat2, rec=i) line
-      
       start = line(blow + 2 - 1) + 1
       finish = line(bhigh + 2) - 1
       astart = line(2)
-        
+
       first = astart + start
-      last =  astart + finish
+      last = astart + finish
 
       do j=first, last
-        if(l == limit) exit
-        read(unit=14, fmt='( 2(I4), 2(A4, I4), 4F8.3, A4, A1)', iostat=fstat, rec=j) bins(l)
-        write(*,*) bins(l)
+        if(l == totalelements) then
+          exit
+        else if(l == limit) then
+          totalelements = limit
+          exit
+        endif
+        read(unit=14, fmt="( 2(I4), 2(A4, I4), 4F8.3, A4, A1, I4)", iostat=fstat, rec=j) bin
+        write(unit=29, fmt="( 2(I4), 2(A4, I4), 4F8.3, A4, A1, I4)", iostat=fstat3) bin
         l = l + 1
       enddo
 
@@ -147,20 +141,58 @@ program main
     close(unit=14, iostat=cstat)
     close(unit=19, iostat=cstat2)
 
-    !export to build cbbin filtered list
-
   end subroutine buildlist
 
-  subroutine printlist(totalelements, onedimen)
+  subroutine printlist(totalelements, length, lendev)
   !just to check to se if the list is properly allocating
-    integer, intent(in) :: totalelements
-    type(distancetype), intent(in) :: onedimen(totalelements)
+    type distancetype
+      integer :: cabin, cbbin
+      character(len=4) :: rightanchor
+      integer :: rightresiduenumber 
+      character(len=4) :: leftanchor
+      integer :: leftresiduenumber
+      real :: caseparation, cbseparation, cacross, cbcross
+      character(len=4) :: pdbid 
+      character(len=1) :: chainid
+      integer :: length
+    end type distancetype
+
+    integer, intent(in) :: totalelements, length, lendev
+    integer :: cstat,fstat
+    type(distancetype) :: bin
     integer :: i
 
-    do i=1,totalelements - 1
-      write(*,*) onedimen(i)
-    enddo 
-  
-  end subroutine printlist
+    rewind 29
 
+    do i=1,totalelements !change to read until eof
+      read(unit=29, fmt="( 2(I4), 2(A4, I4), 4F8.3, A4, A1, I4)", iostat=fstat) bin
+      if(bin%length < length - lendev) cycle
+      if(bin%length > length + lendev) cycle
+      write(*,*) bin
+    enddo 
+
+    close(unit=29, iostat=cstat, status='delete')
+
+  end subroutine printlist
+end module search
+
+
+
+
+program main
+	integer :: argnum,indexnum
+
+	argnum = iargc()
+	if(argnum /= 6) then
+		write(*,*) "please specify all variables for input: 6 variables, see README"
+	call getarg(1,allpdbs)
+	indexnum = index(allpdbs,txt)
+	if(indexnum == 0) then
+		write(*,*) "the file", allpdbs, &
+		" could not be opened, proceed 	with a txt file"
+		stop
+	endif
+  use search
+  implicit none
 end program main
+!run through the final set of distances, get all backbone coordinates, store in new file
